@@ -4,7 +4,7 @@
 
 This is a Pi package exposing one extension and one skill via `package.json`.
 
-- `extensions/codex-image-gen.ts`: TypeScript Pi extension that registers the `codex_generate_image` tool.
+- `index.ts`: TypeScript Pi extension that registers the `codex_generate_image` tool.
 - `skills/imagegen/SKILL.md`: agent-facing image generation workflow.
 - `skills/imagegen/scripts/`: Python helpers, including vendored `image_gen.py` and chroma-key removal.
 - `skills/imagegen/references/`: supporting docs loaded only when relevant.
@@ -66,7 +66,7 @@ No `npm test`, `bun test`, formatter, or linter script is wired in `package.json
 
 ## Coding Style & Naming Conventions
 
-Use TypeScript ESM for extensions and keep helper logic in `extensions/codex-image-gen.ts` unless a split clearly reduces complexity. Follow the existing style: tabs, `const` for constants, PascalCase for interfaces/types, camelCase for functions and variables, and UPPER_SNAKE_CASE for module constants.
+Use TypeScript ESM for extensions and keep helper logic in `index.ts` unless a split clearly reduces complexity. Follow the existing style: tabs, `const` for constants, PascalCase for interfaces/types, camelCase for functions and variables, and UPPER_SNAKE_CASE for module constants.
 
 When changing tool parameters, update both the Typebox `TOOL_PARAMS` schema and prompt guidance. Preserve save-mode names and config keys unless intentionally making a breaking change.
 
