@@ -6,6 +6,21 @@ This project follows the spirit of [Keep a Changelog](https://keepachangelog.com
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-05-07
+
+### Added
+
+- CI workflow running type-check and `pack:dry-run` on every push and PR.
+- `CHANGELOG.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`.
+- GitHub PR template and issue templates (bug report, feature request).
+- `.editorconfig` for consistent editor settings.
+
+### Changed
+
+- `peerDependencies` relaxed to `"*"`; pinned versions moved to `devDependencies`.
+- `tsconfig.json` module resolution updated from `Node16` to `NodeNext`.
+- `package.json`: added `author`, `bugs`, `homepage`, `publishConfig.access`, `engines`, `pi-extension` keyword; community docs included in published `files`.
+
 ## [0.1.4] - 2026-05-07
 
 ### Fixed
