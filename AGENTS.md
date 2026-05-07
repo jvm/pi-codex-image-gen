@@ -27,10 +27,10 @@ Installs `typescript`, `@types/node`, and resolves Pi peer dependencies (`@earen
 ### 2. Type-check
 
 ```bash
-bunx tsc --noEmit
+bun run check
 ```
 
-Uses `tsconfig.json` (ES2022 / Node16 module resolution). Catches schema mismatches, missing imports, and type errors in the extension.
+Uses `tsconfig.json` (ES2022 / NodeNext module resolution). Catches schema mismatches, missing imports, and type errors in the extension.
 
 ### 3. Extension load smoke test
 
@@ -57,7 +57,7 @@ First command validates CLI argument parsing and config resolution without an AP
 ### Full loop (copy-paste)
 
 ```bash
-bunx tsc --noEmit &&
+bun run check &&
   pi -p --no-session -ne -e . 'list your tools' &&
   python3 skills/imagegen/scripts/image_gen.py generate --prompt "Test" --out /tmp/test.png --dry-run
 ```
@@ -66,7 +66,7 @@ No `npm test`, `bun test`, formatter, or linter script is wired in `package.json
 
 ## Coding Style & Naming Conventions
 
-Use TypeScript ESM for extensions and keep helper logic in `index.ts` unless a split clearly reduces complexity. Follow the existing style: tabs, `const` for constants, PascalCase for interfaces/types, camelCase for functions and variables, and UPPER_SNAKE_CASE for module constants.
+Use TypeScript ESM for extensions and keep helper logic in `index.ts` unless a split clearly reduces complexity. Follow the existing style: 2-space indentation, `const` for constants, PascalCase for interfaces/types, camelCase for functions and variables, and UPPER_SNAKE_CASE for module constants.
 
 When changing tool parameters, update both the Typebox `TOOL_PARAMS` schema and prompt guidance. Preserve save-mode names and config keys unless intentionally making a breaking change.
 
