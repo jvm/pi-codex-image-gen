@@ -22,7 +22,7 @@ Run these in order after any extension or skill change. All must pass before com
 bun install
 ```
 
-Installs `typescript`, `@types/node`, and resolves Pi peer dependencies (`@mariozechner/pi-ai`, `@mariozechner/pi-coding-agent`, `typebox`) into `node_modules/`. The `bun.lock` file must be committed.
+Installs `typescript`, `@types/node`, and resolves Pi peer dependencies (`@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `typebox`) into `node_modules/`. The `bun.lock` file must be committed.
 
 ### 2. Type-check
 

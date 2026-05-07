@@ -1,14 +1,18 @@
 {
   "name": "pi-codex-image-gen",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Image generation for Pi using the ChatGPT Images 2.0 model.",
   "license": "Apache-2.0",
   "files": ["index.ts", "skills", "README.md", "LICENSE"],
   "keywords": ["pi-package", "pi", "codex", "image-generation", "gpt-image-2"],
   "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "pack:dry-run": "npm pack --dry-run"
+  },
   "peerDependencies": {
-    "@mariozechner/pi-ai": "^0.70.2",
-    "@mariozechner/pi-coding-agent": "^0.70.2",
+    "@earendil-works/pi-ai": "^0.74.0",
+    "@earendil-works/pi-coding-agent": "^0.74.0",
     "typebox": "^1.1.33"
   },
   "pi": {

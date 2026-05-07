@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A **pi-package** (consumed by [`@mariozechner/pi-coding-agent`](https://www.npmjs.com/package/@mariozechner/pi-coding-agent)) that bundles two artifacts:
+A **pi-package** (consumed by [`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)) that bundles two artifacts:
 
 1. **A Pi extension** (`extensions/codex-image-gen.ts`) — registers a `codex_generate_image` tool that generates bitmap images via the OpenAI Codex (ChatGPT) backend using `gpt-image-2`. Auth piggybacks on Pi's existing `openai-codex` login, so `OPENAI_API_KEY` is **not** required for the default path.
 2. **A Pi skill** (`skills/imagegen/`) — a workflow/prompting playbook that tells Pi when and how to call the tool, with a Python CLI fallback (`scripts/image_gen.py`) for cases the tool can't cover (notably true-native transparency via `gpt-image-1.5`).
@@ -15,7 +15,7 @@ Both are exposed via the `pi` field in `package.json`:
 "pi": { "extensions": ["./extensions"], "skills": ["./skills"] }
 ```
 
-There is no build, lint, or test pipeline in this repo. Peer deps (`@mariozechner/pi-ai`, `@mariozechner/pi-coding-agent`, `typebox`) are resolved by the host Pi installation at runtime.
+There is no build, lint, or test pipeline in this repo. Peer deps (`@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `typebox`) are resolved by the host Pi installation at runtime.
 
 ## Architecture
 
@@ -61,7 +61,7 @@ There is no `npm test` / `bun test` / linter wired up. Useful manual checks:
   ```bash
   bunx tsc --noEmit extensions/codex-image-gen.ts
   ```
-  This requires `@mariozechner/pi-ai`, `@mariozechner/pi-coding-agent`, and `typebox` resolvable from `node_modules` (install them locally if iterating in isolation).
+  This requires `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and `typebox` resolvable from `node_modules` (install them locally if iterating in isolation).
 
 - **Dry-run the CLI fallback** (no API key needed):
   ```bash
