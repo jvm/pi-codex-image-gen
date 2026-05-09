@@ -38,7 +38,7 @@
   "pi": {
     "extensions": ["./index.ts"],
     "skills": ["./skills"]
-  }
+  },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
