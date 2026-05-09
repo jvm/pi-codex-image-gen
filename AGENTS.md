@@ -19,15 +19,15 @@ Run these in order after any extension or skill change. All must pass before com
 ### 1. Install dependencies (first time or after package.json changes)
 
 ```bash
-bun install
+npm install
 ```
 
-Installs `typescript`, `@types/node`, and resolves Pi peer dependencies (`@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `typebox`) into `node_modules/`. The `bun.lock` file must be committed.
+Installs `typescript`, `@types/node`, and resolves Pi peer dependencies (`@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `typebox`) into `node_modules/`. The `package-lock.json` file must be committed.
 
 ### 2. Type-check
 
 ```bash
-bun run check
+npm run check
 ```
 
 Uses `tsconfig.json` (ES2022 / NodeNext module resolution). Catches schema mismatches, missing imports, and type errors in the extension.
@@ -57,12 +57,12 @@ First command validates CLI argument parsing and config resolution without an AP
 ### Full loop (copy-paste)
 
 ```bash
-bun run check &&
+npm run check &&
   pi -p --no-session -ne -e . 'list your tools' &&
   python3 skills/imagegen/scripts/image_gen.py generate --prompt "Test" --out /tmp/test.png --dry-run
 ```
 
-No `npm test`, `bun test`, formatter, or linter script is wired in `package.json`.
+No `npm test`, formatter, or linter script is wired in `package.json`.
 
 ## Coding Style & Naming Conventions
 

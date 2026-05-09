@@ -55,13 +55,13 @@ Standalone Python CLI with three subcommands: `generate`, `edit`, `generate-batc
 
 ## Common tasks
 
-There is no `npm test` / `bun test` / linter wired up. Useful manual checks:
+There is no `npm test` / linter wired up. Useful manual checks:
 
-- **Type-check the extension** (uses peer deps from a Pi install):
+- **Type-check the extension**:
   ```bash
-  bunx tsc --noEmit extensions/codex-image-gen.ts
+  npm run check
   ```
-  This requires `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and `typebox` resolvable from `node_modules` (install them locally if iterating in isolation).
+  This requires `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and `typebox` resolvable from `node_modules` (install them locally with `npm install` if iterating in isolation).
 
 - **Dry-run the CLI fallback** (no API key needed):
   ```bash
