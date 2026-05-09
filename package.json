@@ -1,6 +1,6 @@
 {
   "name": "pi-codex-image-gen",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Image generation for Pi using the ChatGPT Images 2.0 model.",
   "type": "module",
   "license": "Apache-2.0",
@@ -38,7 +38,7 @@
   "pi": {
     "extensions": ["./index.ts"],
     "skills": ["./skills"]
-  },
+  }
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",

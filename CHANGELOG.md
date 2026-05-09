@@ -6,6 +6,12 @@ This project follows the spirit of [Keep a Changelog](https://keepachangelog.com
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-05-09
+
+### Changed
+
+- Switched development, CI, and publish workflows from Bun to npm with `package-lock.json` for better Pi package consistency.
+
 ## [0.1.5] - 2026-05-07
 
 ### Added
