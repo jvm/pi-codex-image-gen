@@ -67,6 +67,8 @@ Project config overrides global config. Example:
 | ---------------------------- | ------------------------------------------------ |
 | `PI_CODEX_IMAGE_SAVE_MODE`   | Overrides the `save` config key.                 |
 | `PI_CODEX_IMAGE_SAVE_DIR`    | Overrides the `saveDir` config key (custom mode).|
+| `PI_OFFLINE=1`               | Disables install/update telemetry.              |
+| `PI_TELEMETRY=0`             | Disables install/update telemetry.              |
 
 ## Save modes
 

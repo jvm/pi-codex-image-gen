@@ -13,6 +13,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, getAgentDir, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
+const PACKAGE_NAME = "pi-codex-image-gen";
 const PROVIDER = "openai-codex";
 const DEFAULT_MODEL = "gpt-5.5";
 const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
@@ -21,6 +22,8 @@ const DEFAULT_SAVE_MODE = "global";
 const OPENAI_BETA_HEADER = "responses=experimental";
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
+const INSTALL_TELEMETRY_URL = "https://mocito.dev/api/report-install";
+const INSTALL_TELEMETRY_TIMEOUT_MS = 5000;
 
 const SAVE_MODES = ["none", "project", "global", "custom"] as const;
 type SaveMode = (typeof SAVE_MODES)[number];
@@ -85,6 +88,10 @@ interface ParsedCodexResponse {
 	usage?: unknown;
 }
 
+interface InstallTelemetryState {
+	lastReportedVersion?: string;
+}
+
 // --- #11: Typed SSE event discriminated union ---
 
 type CodexSseEvent =
@@ -145,6 +152,55 @@ function loadConfig(cwd: string): ExtensionConfig {
 	const globalConfig = readConfigFile(join(getAgentDir(), "extensions", "codex-image-gen.json"));
 	const projectConfig = readConfigFile(join(cwd, ".pi", "extensions", "codex-image-gen.json"));
 	return { ...globalConfig, ...projectConfig };
+}
+
+function isTruthyEnvFlag(value: string | undefined): boolean {
+	if (!value) return false;
+	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
+}
+
+function isInstallTelemetryEnabled(): boolean {
+	if (isTruthyEnvFlag(process.env.PI_OFFLINE)) return false;
+	if (process.env.PI_TELEMETRY !== undefined) return isTruthyEnvFlag(process.env.PI_TELEMETRY);
+	const settings = readConfigFile(join(getAgentDir(), "settings.json")) as { enableInstallTelemetry?: unknown };
+	return settings.enableInstallTelemetry !== false;
+}
+
+function getPackageVersion(): string {
+	try {
+		const packageJson = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version?: unknown };
+		return typeof packageJson.version === "string" && packageJson.version.length > 0 ? packageJson.version : "0.0.0";
+	} catch {
+		return "0.0.0";
+	}
+}
+
+function getInstallTelemetryUserAgent(version: string): string {
+	const runtimeVersions = process.versions as NodeJS.ProcessVersions & { bun?: string };
+	const runtime = runtimeVersions.bun ? `bun/${runtimeVersions.bun}` : `node/${process.version}`;
+	return `${PACKAGE_NAME}/${version} (${process.platform}; ${runtime}; ${process.arch})`;
+}
+
+async function reportInstallTelemetry(): Promise<void> {
+	try {
+		if (!isInstallTelemetryEnabled()) return;
+
+		const version = getPackageVersion();
+		const statePath = join(getAgentDir(), "extensions", "codex-image-gen-install.json");
+		const state = readConfigFile(statePath) as InstallTelemetryState;
+		if (state.lastReportedVersion === version) return;
+
+		await mkdir(join(getAgentDir(), "extensions"), { recursive: true });
+		await writeFile(statePath, `${JSON.stringify({ lastReportedVersion: version }, null, 2)}\n`);
+
+		const params = new URLSearchParams({ tool: PACKAGE_NAME, version });
+		await fetch(`${INSTALL_TELEMETRY_URL}?${params.toString()}`, {
+			headers: { "User-Agent": getInstallTelemetryUserAgent(version) },
+			signal: AbortSignal.timeout(INSTALL_TELEMETRY_TIMEOUT_MS),
+		});
+	} catch {
+		// Best-effort telemetry: ignore settings, filesystem, and network failures.
+	}
 }
 
 // --- Path helpers ---
@@ -385,6 +441,8 @@ async function requestImage(
 // --- Extension entry point ---
 
 export default function codexImageGen(pi: ExtensionAPI) {
+	void reportInstallTelemetry();
+
 	pi.registerTool({
 		name: "codex_generate_image",
 		label: "Codex Image",
