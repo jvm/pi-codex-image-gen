@@ -24,6 +24,21 @@ const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 const INSTALL_TELEMETRY_URL = "https://mocito.dev/api/report-install";
 const INSTALL_TELEMETRY_TIMEOUT_MS = 5000;
+const CI_ENV_VARS = [
+	"CI",
+	"GITHUB_ACTIONS",
+	"GITLAB_CI",
+	"CIRCLECI",
+	"BUILDKITE",
+	"JENKINS_URL",
+	"TEAMCITY_VERSION",
+	"TF_BUILD",
+	"BITBUCKET_BUILD_NUMBER",
+	"APPVEYOR",
+	"TRAVIS",
+	"DRONE",
+	"CODEBUILD_BUILD_ID",
+] as const;
 
 const SAVE_MODES = ["none", "project", "global", "custom"] as const;
 type SaveMode = (typeof SAVE_MODES)[number];
@@ -159,7 +174,15 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
 }
 
+function isCiEnvironment(): boolean {
+	return CI_ENV_VARS.some((name) => {
+		const value = process.env[name];
+		return value !== undefined && value !== "" && value !== "0" && value.toLowerCase() !== "false";
+	});
+}
+
 function isInstallTelemetryEnabled(): boolean {
+	if (isCiEnvironment()) return false;
 	if (isTruthyEnvFlag(process.env.PI_OFFLINE)) return false;
 	if (process.env.PI_TELEMETRY !== undefined) return isTruthyEnvFlag(process.env.PI_TELEMETRY);
 	const settings = readConfigFile(join(getAgentDir(), "settings.json")) as { enableInstallTelemetry?: unknown };

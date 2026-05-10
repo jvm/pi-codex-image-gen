@@ -6,6 +6,12 @@ This project follows the spirit of [Keep a Changelog](https://keepachangelog.com
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-05-10
+
+### Fixed
+
+- Disable install/update telemetry automatically in CI environments.
+
 ## [0.1.7] - 2026-05-10
 
 ### Added
