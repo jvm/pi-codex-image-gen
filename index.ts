@@ -49,8 +49,28 @@ type OutputFormat = (typeof OUTPUT_FORMATS)[number];
 // --- #1: Retry helpers with exponential backoff + jitter ---
 
 function isRetryableStatus(status: number, errorText: string): boolean {
-	if ([429, 500, 502, 503, 504].includes(status)) return true;
-	return /rate.?limit|overloaded|service.?unavailable|upstream.?connect|connection.?refused/i.test(errorText);
+	if ([408, 413, 425, 429, 500, 502, 503, 504].includes(status)) return true;
+	return /rate.?limit|overloaded|service.?unavailable|upstream.?connect|connection.?refused|request.?exceeds|payload.?too.?large/i.test(errorText);
+}
+
+// Detect 413-class errors so we can rotate the prompt_cache_key. The Codex
+// Responses backend treats `prompt_cache_key` as a server-side prefix-cache
+// slot; for image_generation calls the hit rate is effectively zero while
+// accumulated cached prefix keeps growing across calls sharing the same key,
+// eventually pushing the effective payload past the backend's multipart limit.
+function isPayloadTooLarge(status: number, errorText: string): boolean {
+	if (status === 413) return true;
+	return /\b413\b|request.?exceeds.?the.?maximum.?size|payload.?too.?large/i.test(errorText);
+}
+
+// Per-call cache key: sessionId + timestamp + random suffix. sessionId is kept
+// in the key so any future per-session bucketing on the backend still works,
+// while each individual image call lands in its own cache slot so server-side
+// state cannot accumulate across many generations in one Pi session.
+function makeRequestCacheKey(sessionId: string): string {
+	const rand = Math.random().toString(36).slice(2, 10);
+	const ts = Date.now().toString(36);
+	return `${sessionId}:${ts}:${rand}`;
 }
 
 function backoffMs(attempt: number): number {
@@ -291,12 +311,12 @@ async function saveImage(base64Data: string, outputFormat: OutputFormat, outputD
 // #7: parallel_tool_calls: false
 // #14: include removed (not needed without reasoning)
 
-function buildRequestBody(params: ToolParams, model: string, outputFormat: OutputFormat, sessionId: string) {
+function buildRequestBody(params: ToolParams, model: string, outputFormat: OutputFormat, sessionId: string, cacheKeyOverride?: string) {
 	return {
 		model,
 		store: false,
 		stream: true,
-		prompt_cache_key: sessionId,
+		prompt_cache_key: cacheKeyOverride || makeRequestCacheKey(sessionId),
 		instructions:
 			"You are generating bitmap image assets. For this request, call the image_generation tool exactly once. Do not answer with only text unless image generation is unavailable.",
 		input: [
@@ -425,7 +445,6 @@ async function requestImage(
 	sessionId: string,
 	signal?: AbortSignal,
 ): Promise<ParsedCodexResponse> {
-	const body = JSON.stringify(buildRequestBody(params, model, outputFormat, sessionId));
 	const headers: Record<string, string> = {
 		Authorization: `Bearer ${token}`,
 		"chatgpt-account-id": accountId,
@@ -435,8 +454,12 @@ async function requestImage(
 		"content-type": "application/json",
 	};
 
+	let cacheKey = makeRequestCacheKey(sessionId);
+
 	for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
 		if (signal?.aborted) throw new Error("Image generation was aborted.");
+
+		const body = JSON.stringify(buildRequestBody(params, model, outputFormat, sessionId, cacheKey));
 
 		const response = await fetch(CODEX_RESPONSES_URL, {
 			method: "POST",
@@ -448,6 +471,11 @@ async function requestImage(
 		if (!response.ok) {
 			const errorText = await response.text();
 			if (attempt <= MAX_RETRIES && isRetryableStatus(response.status, errorText)) {
+				// Rotate cache key on 413 so the server stops replaying any
+				// accumulated cached context that pushed the payload over.
+				if (isPayloadTooLarge(response.status, errorText)) {
+					cacheKey = makeRequestCacheKey(`${sessionId}:retry${attempt}`);
+				}
 				const delay = backoffMs(attempt);
 				await new Promise<void>((resolve) => setTimeout(resolve, delay));
 				continue;
