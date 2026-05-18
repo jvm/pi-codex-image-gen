@@ -8,7 +8,7 @@
 
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { extname, isAbsolute, join, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, getAgentDir, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
@@ -22,6 +22,7 @@ const DEFAULT_SAVE_MODE = "global";
 const OPENAI_BETA_HEADER = "responses=experimental";
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
+const MAX_REFERENCE_IMAGES = 5;
 const INSTALL_TELEMETRY_URL = "https://mocito.dev/api/report-install";
 const INSTALL_TELEMETRY_TIMEOUT_MS = 5000;
 const CI_ENV_VARS = [
@@ -46,6 +47,9 @@ type SaveMode = (typeof SAVE_MODES)[number];
 const OUTPUT_FORMATS = ["png", "jpeg", "webp"] as const;
 type OutputFormat = (typeof OUTPUT_FORMATS)[number];
 
+const INPUT_IMAGE_DETAILS = ["auto", "low", "high"] as const;
+type InputImageDetail = (typeof INPUT_IMAGE_DETAILS)[number];
+
 // --- #1: Retry helpers with exponential backoff + jitter ---
 
 function isRetryableStatus(status: number, errorText: string): boolean {
@@ -66,6 +70,26 @@ const TOOL_PARAMS = Type.Object({
 		Type.String({ description: `Codex model that should invoke image generation. Defaults to ${DEFAULT_MODEL}.` }),
 	),
 	outputFormat: Type.Optional(StringEnum(OUTPUT_FORMATS)),
+	image: Type.Optional(
+		Type.String({
+			description:
+				"Single local reference image path for image-to-image/edit-style generation. Relative paths resolve under the current workspace.",
+		}),
+	),
+	images: Type.Optional(
+		Type.Array(
+			Type.String({
+				description:
+					"Local reference image path for image-to-image/edit-style generation. Relative paths resolve under the current workspace.",
+			}),
+			{ maxItems: MAX_REFERENCE_IMAGES },
+		),
+	),
+	imageDetail: Type.Optional(
+		StringEnum(INPUT_IMAGE_DETAILS, {
+			description: "Detail level for reference images sent to the Codex Responses backend. Defaults to auto.",
+		}),
+	),
 	save: Type.Optional(StringEnum(SAVE_MODES)),
 	saveDir: Type.Optional(
 		Type.String({
@@ -94,6 +118,12 @@ interface GeneratedImage {
 	status: string;
 	result: string;
 	revisedPrompt?: string;
+}
+
+interface InputImageContent {
+	type: "input_image";
+	image_url: string;
+	detail: InputImageDetail;
 }
 
 interface ParsedCodexResponse {
@@ -276,6 +306,79 @@ function mimeForFormat(outputFormat: OutputFormat): string {
 	return outputFormat === "jpeg" ? "image/jpeg" : `image/${outputFormat}`;
 }
 
+function mimeForInputImage(buffer: Buffer, filePath: string): string {
+	if (buffer.length >= 12) {
+		if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+			return "image/png";
+		}
+		if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+			return "image/jpeg";
+		}
+		if (buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP") {
+			return "image/webp";
+		}
+	}
+
+	switch (extname(filePath).toLowerCase()) {
+		case ".png":
+			return "image/png";
+		case ".jpg":
+		case ".jpeg":
+			return "image/jpeg";
+		case ".webp":
+			return "image/webp";
+		default:
+			throw new Error(`Unsupported reference image type for ${filePath}. Use PNG, JPEG, or WebP.`);
+	}
+}
+
+function collectReferenceImagePaths(params: ToolParams): string[] {
+	return [params.image, ...(params.images ?? [])]
+		.filter((value): value is string => typeof value === "string")
+		.map((value) => value.trim())
+		.filter(Boolean);
+}
+
+function dataUrlToInputImage(dataUrl: string, detail: InputImageDetail): InputImageContent {
+	if (!/^data:image\/(png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=\s]+$/i.test(dataUrl)) {
+		throw new Error("Reference image data URLs must be base64 PNG, JPEG, or WebP images.");
+	}
+	return {
+		type: "input_image",
+		image_url: dataUrl.replace(/\s+/g, ""),
+		detail,
+	};
+}
+
+function readInputImages(params: ToolParams, cwd: string): InputImageContent[] {
+	const detail = params.imageDetail || "auto";
+	const referencePaths = collectReferenceImagePaths(params);
+	if (referencePaths.length > MAX_REFERENCE_IMAGES) {
+		throw new Error(`At most ${MAX_REFERENCE_IMAGES} reference images are supported per request.`);
+	}
+	return referencePaths.map((imagePath) => {
+		if (/^data:image\//i.test(imagePath)) {
+			return dataUrlToInputImage(imagePath, detail);
+		}
+		if (/^https?:\/\//i.test(imagePath)) {
+			throw new Error("Reference image URLs are not supported yet. Download the image locally and pass its path.");
+		}
+		const resolvedPath = resolveUnderCwd(cwd, imagePath);
+		let buffer: Buffer;
+		try {
+			buffer = readFileSync(resolvedPath);
+		} catch (error) {
+			throw new Error(`Could not read reference image ${resolvedPath}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+		const mimeType = mimeForInputImage(buffer, resolvedPath);
+		return {
+			type: "input_image",
+			image_url: `data:${mimeType};base64,${buffer.toString("base64")}`,
+			detail,
+		};
+	});
+}
+
 async function saveImage(base64Data: string, outputFormat: OutputFormat, outputDir: string, imageCallId: string): Promise<string> {
 	const filename = `${sanitizePathPart(imageCallId, "image_generation")}.${extensionForFormat(outputFormat)}`;
 	const filePath = join(outputDir, filename);
@@ -291,18 +394,21 @@ async function saveImage(base64Data: string, outputFormat: OutputFormat, outputD
 // #7: parallel_tool_calls: false
 // #14: include removed (not needed without reasoning)
 
-function buildRequestBody(params: ToolParams, model: string, outputFormat: OutputFormat, sessionId: string) {
+function buildRequestBody(params: ToolParams, model: string, outputFormat: OutputFormat, sessionId: string, cwd: string) {
+	const referenceImages = readInputImages(params, cwd);
 	return {
 		model,
 		store: false,
 		stream: true,
 		prompt_cache_key: sessionId,
 		instructions:
-			"You are generating bitmap image assets. For this request, call the image_generation tool exactly once. Do not answer with only text unless image generation is unavailable.",
+			referenceImages.length > 0
+				? "You are generating or editing bitmap image assets. Use the provided reference image(s) as visual context and call the image_generation tool exactly once. Do not answer with only text unless image generation is unavailable."
+				: "You are generating bitmap image assets. For this request, call the image_generation tool exactly once. Do not answer with only text unless image generation is unavailable.",
 		input: [
 			{
 				role: "user",
-				content: [{ type: "input_text", text: params.prompt }],
+				content: [{ type: "input_text", text: params.prompt }, ...referenceImages],
 			},
 		],
 		tools: [{ type: "image_generation", output_format: outputFormat }],
@@ -423,9 +529,10 @@ async function requestImage(
 	model: string,
 	outputFormat: OutputFormat,
 	sessionId: string,
+	cwd: string,
 	signal?: AbortSignal,
 ): Promise<ParsedCodexResponse> {
-	const body = JSON.stringify(buildRequestBody(params, model, outputFormat, sessionId));
+	const body = JSON.stringify(buildRequestBody(params, model, outputFormat, sessionId, cwd));
 	const headers: Record<string, string> = {
 		Authorization: `Bearer ${token}`,
 		"chatgpt-account-id": accountId,
@@ -470,10 +577,11 @@ export default function codexImageGen(pi: ExtensionAPI) {
 		name: "codex_generate_image",
 		label: "Codex Image",
 		description:
-			"Generate an image with the OpenAI Codex ChatGPT backend built-in image_generation tool (gpt-image-2). Uses the existing openai-codex login; does not require OPENAI_API_KEY.",
-		promptSnippet: "Generate bitmap images via the OpenAI Codex ChatGPT backend gpt-image-2 image_generation tool.",
+			"Generate or edit an image with the OpenAI Codex ChatGPT backend built-in image_generation tool (gpt-image-2). Can attach local reference images. Uses the existing openai-codex login; does not require OPENAI_API_KEY.",
+		promptSnippet: "Generate or edit bitmap images via the OpenAI Codex ChatGPT backend gpt-image-2 image_generation tool, optionally with local reference images.",
 		promptGuidelines: [
-			"Use codex_generate_image when the user asks to generate a raster image, illustration, photo, sprite, icon draft, banner, or other bitmap asset with OpenAI/Codex image generation.",
+			"Use codex_generate_image when the user asks to generate or edit a raster image, illustration, photo, sprite, icon draft, banner, or other bitmap asset with OpenAI/Codex image generation.",
+			"Pass local reference image paths via image/images when the user provides images for style, identity, composition, or editing context.",
 			"Do not use codex_generate_image without a clear image-generation request, because it consumes the user's Codex image quota.",
 		],
 		parameters: TOOL_PARAMS,
@@ -490,12 +598,18 @@ export default function codexImageGen(pi: ExtensionAPI) {
 			const accountId = extractChatGptAccountId(token);
 			const sessionId = ctx.sessionManager.getSessionId();
 
+			const referenceImageCount = collectReferenceImagePaths(params).length;
 			onUpdate?.({
-				content: [{ type: "text", text: `Requesting gpt-image-2 generation through ${PROVIDER}/${model}...` }],
-				details: { provider: PROVIDER, model, outputFormat },
+				content: [
+					{
+						type: "text",
+						text: `Requesting gpt-image-2 generation through ${PROVIDER}/${model}${referenceImageCount ? ` with ${referenceImageCount} reference image${referenceImageCount === 1 ? "" : "s"}` : ""}...`,
+					},
+				],
+				details: { provider: PROVIDER, model, outputFormat, referenceImageCount },
 			});
 
-			const parsed = await requestImage(params, token, accountId, model, outputFormat, sessionId, signal);
+			const parsed = await requestImage(params, token, accountId, model, outputFormat, sessionId, ctx.cwd, signal);
 			if (!parsed.image) {
 				const text = parsed.text.join("").trim();
 				throw new Error(text ? `Codex did not return an image. Response text: ${text}` : "Codex did not return an image.");
@@ -536,6 +650,7 @@ export default function codexImageGen(pi: ExtensionAPI) {
 					model,
 					backendImageModel: "gpt-image-2",
 					outputFormat,
+					referenceImageCount,
 					saveMode: saveConfig.mode,
 					savedPath,
 					responseId: parsed.responseId,

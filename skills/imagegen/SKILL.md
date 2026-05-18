@@ -7,7 +7,7 @@ description: "Generate or edit raster images when the task benefits from AI-crea
 
 > Adapted from OpenAI Codex's `imagegen` skill for Pi.
 > Original source: https://github.com/openai/codex/tree/main/codex-rs/skills/src/assets/samples/imagegen
-> Required Pi modifications: use Pi's `codex_generate_image` tool name, Pi artifact paths, and the bundled helper path; direct image editing remains CLI fallback unless the Pi tool grows edit support.
+> Required Pi modifications: use Pi's `codex_generate_image` tool name, Pi artifact paths, and the bundled helper path. The Pi tool supports local reference images for image-to-image/edit-style requests via `image`/`images`.
 
 Generates or edits images for the current project (for example website assets, game assets, UI mockups, product mockups, wireframes, logo design, photorealistic images, or infographics).
 
@@ -15,7 +15,7 @@ Generates or edits images for the current project (for example website assets, g
 
 This skill has exactly two top-level modes:
 
-- **Default Pi tool mode (preferred):** Pi `codex_generate_image` tool for normal image generation, editing, and simple transparent-image requests. Does not require `OPENAI_API_KEY`.
+- **Default Pi tool mode (preferred):** Pi `codex_generate_image` tool for normal image generation, reference-guided image-to-image/editing, and simple transparent-image requests. Does not require `OPENAI_API_KEY`.
 - **Fallback CLI mode:** `scripts/image_gen.py` CLI. Use when the user explicitly asks for the CLI/API/model path, or after the user explicitly confirms a true model-native transparency fallback with `gpt-image-1.5`. Requires `OPENAI_API_KEY`.
 
 Within CLI fallback, the CLI exposes three subcommands:
@@ -25,7 +25,7 @@ Within CLI fallback, the CLI exposes three subcommands:
 - `generate-batch`
 
 Rules:
-- Use the Pi `codex_generate_image` tool by default for normal image generation and editing requests.
+- Use the Pi `codex_generate_image` tool by default for normal image generation and reference-guided editing requests.
 - Do not switch to CLI fallback for ordinary quality, size, or file-path control.
 - If the user explicitly asks for a transparent image/background, stay on Pi `codex_generate_image` first: prompt for a flat removable chroma-key background, then remove it locally with the installed helper at `scripts/remove_chroma_key.py`.
 - Never silently switch from Pi `codex_generate_image` or CLI `gpt-image-2` to CLI `gpt-image-1.5`. Treat this as a model/path downgrade and ask the user before doing it, unless the user has already explicitly requested `gpt-image-1.5`, `scripts/image_gen.py`, or CLI fallback.
@@ -82,9 +82,9 @@ Intent:
 - If the user provides no images, treat the request as **generate**.
 
 Pi edit semantics:
-- The current Pi `codex_generate_image` tool is for new image generation. Do not promise arbitrary filesystem-path editing through the Pi tool.
-- If the user wants to edit an existing image, use the explicit CLI fallback only when the user asks for it or confirms it.
-- If a local file needs direct file-path control, masks, or other explicit CLI-only parameters, use the explicit CLI fallback only after confirmation.
+- The Pi `codex_generate_image` tool accepts local reference images via `image` or `images`. Use it by default for image-to-image, style transfer, identity/composition references, and edit-style prompts.
+- Relative reference image paths resolve under the current workspace. Supported input formats are PNG, JPEG, and WebP.
+- If a task requires masks, direct in-place editing, file IDs, remote image URLs, or other explicit CLI-only parameters, use the explicit CLI fallback only after confirmation.
 - For edits, preserve invariants aggressively and save non-destructively by default.
 
 Execution strategy:
@@ -100,11 +100,11 @@ Assume the user wants a new image unless they clearly ask to change an existing 
 3. Decide whether the output is preview-only or meant to be consumed by the current project.
 4. Decide the execution strategy: single asset vs repeated Pi tool calls vs CLI `generate-batch`.
 5. Collect inputs up front: prompt(s), exact text (verbatim), constraints/avoid list, and any input images.
-6. For every input image, label its role explicitly:
+6. For every input image, label its role explicitly and pass it to `codex_generate_image` with `image` or `images`:
    - reference image
    - edit target
    - supporting insert/style/compositing input
-7. If the edit target is only on the local filesystem, use CLI fallback for direct edits only after the user asks for or confirms fallback mode.
+7. If the task requires masks, remote URLs, direct in-place editing, or other CLI-only controls, use CLI fallback for direct edits only after the user asks for or confirms fallback mode.
 8. If the user asked for a photo, illustration, sprite, product image, banner, or other explicitly raster-style asset, use `codex_generate_image` rather than substituting SVG/HTML/CSS placeholders. If the request is for an icon, logo, or UI graphic that should match existing repo-native SVG/vector/code assets, prefer editing those directly instead.
 9. Augment the prompt based on specificity:
    - If the user's prompt is already specific and detailed, normalize it into a clear spec without adding creative requirements.
