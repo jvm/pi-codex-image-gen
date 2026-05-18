@@ -1,14 +1,15 @@
 /**
  * Project-local Codex image generation extension.
  *
- * Registers `codex_generate_image`, a tool that uses Pi's existing
- * openai-codex ChatGPT/Codex auth to call the Codex Responses backend with the
- * native `image_generation` tool. The backend maps that tool to gpt-image-2.
+ * Registers `codex_generate_image` and `codex_edit_image`, tools that use Pi's
+ * existing openai-codex ChatGPT/Codex auth to call the Codex Responses backend
+ * with the native `image_generation` tool. The backend maps that tool to
+ * gpt-image-2.
  */
 
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { extname, isAbsolute, join, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, getAgentDir, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
@@ -74,7 +75,26 @@ const TOOL_PARAMS = Type.Object({
 	),
 });
 
+const EDIT_TOOL_PARAMS = Type.Object({
+	prompt: Type.String({ description: "Natural-language edit instructions. Be explicit about what to preserve and what to change." }),
+	image: Type.Union([
+		Type.String({ description: "Path to the source image to edit. Relative paths resolve under the current workspace." }),
+		Type.Array(Type.String(), { description: "One or more source image paths. Relative paths resolve under the current workspace." }),
+	]),
+	model: Type.Optional(
+		Type.String({ description: `Codex model that should invoke image editing. Defaults to ${DEFAULT_MODEL}.` }),
+	),
+	outputFormat: Type.Optional(StringEnum(OUTPUT_FORMATS)),
+	save: Type.Optional(StringEnum(SAVE_MODES)),
+	saveDir: Type.Optional(
+		Type.String({
+			description: "Directory to save the edited image when save=custom. Relative paths resolve under the current workspace.",
+		}),
+	),
+});
+
 type ToolParams = Static<typeof TOOL_PARAMS>;
+type EditToolParams = Static<typeof EDIT_TOOL_PARAMS>;
 
 // --- Config types ---
 
@@ -276,6 +296,27 @@ function mimeForFormat(outputFormat: OutputFormat): string {
 	return outputFormat === "jpeg" ? "image/jpeg" : `image/${outputFormat}`;
 }
 
+function mimeForPath(path: string): string {
+	switch (extname(path).toLowerCase()) {
+		case ".jpg":
+		case ".jpeg":
+			return "image/jpeg";
+		case ".webp":
+			return "image/webp";
+		case ".gif":
+			return "image/gif";
+		case ".png":
+		default:
+			return "image/png";
+	}
+}
+
+function readImageAsDataUrl(cwd: string, rawPath: string): string {
+	const path = resolveUnderCwd(cwd, rawPath);
+	const bytes = readFileSync(path);
+	return `data:${mimeForPath(path)};base64,${bytes.toString("base64")}`;
+}
+
 async function saveImage(base64Data: string, outputFormat: OutputFormat, outputDir: string, imageCallId: string): Promise<string> {
 	const filename = `${sanitizePathPart(imageCallId, "image_generation")}.${extensionForFormat(outputFormat)}`;
 	const filePath = join(outputDir, filename);
@@ -303,6 +344,34 @@ function buildRequestBody(params: ToolParams, model: string, outputFormat: Outpu
 			{
 				role: "user",
 				content: [{ type: "input_text", text: params.prompt }],
+			},
+		],
+		tools: [{ type: "image_generation", output_format: outputFormat }],
+		tool_choice: "auto",
+		parallel_tool_calls: false,
+		text: { verbosity: "low" },
+	};
+}
+
+function buildEditRequestBody(params: EditToolParams, model: string, outputFormat: OutputFormat, sessionId: string, cwd: string) {
+	const imagePaths = Array.isArray(params.image) ? params.image : [params.image];
+	if (imagePaths.length === 0) throw new Error("codex_edit_image requires at least one input image.");
+	if (imagePaths.length > 10) throw new Error("codex_edit_image supports up to 10 input images through the Codex Responses backend.");
+
+	return {
+		model,
+		store: false,
+		stream: true,
+		prompt_cache_key: sessionId,
+		instructions:
+			"You are editing bitmap image assets. Use the provided input image(s) as edit targets/references and call the image_generation tool exactly once. Preserve all unspecified visual details. Do not answer with only text unless image editing is unavailable.",
+		input: [
+			{
+				role: "user",
+				content: [
+					{ type: "input_text", text: params.prompt },
+					...imagePaths.map((path) => ({ type: "input_image", detail: "auto", image_url: readImageAsDataUrl(cwd, path) })),
+				],
 			},
 		],
 		tools: [{ type: "image_generation", output_format: outputFormat }],
@@ -417,15 +486,12 @@ function handleCodexEvent(event: CodexSseEvent, parsed: ParsedCodexResponse): vo
 // --- #1: requestImage with retry + backoff + jitter ---
 
 async function requestImage(
-	params: ToolParams,
+	requestBody: unknown,
 	token: string,
 	accountId: string,
-	model: string,
-	outputFormat: OutputFormat,
-	sessionId: string,
 	signal?: AbortSignal,
 ): Promise<ParsedCodexResponse> {
-	const body = JSON.stringify(buildRequestBody(params, model, outputFormat, sessionId));
+	const body = JSON.stringify(requestBody);
 	const headers: Record<string, string> = {
 		Authorization: `Bearer ${token}`,
 		"chatgpt-account-id": accountId,
@@ -495,7 +561,7 @@ export default function codexImageGen(pi: ExtensionAPI) {
 				details: { provider: PROVIDER, model, outputFormat },
 			});
 
-			const parsed = await requestImage(params, token, accountId, model, outputFormat, sessionId, signal);
+			const parsed = await requestImage(buildRequestBody(params, model, outputFormat, sessionId), token, accountId, signal);
 			if (!parsed.image) {
 				const text = parsed.text.join("").trim();
 				throw new Error(text ? `Codex did not return an image. Response text: ${text}` : "Codex did not return an image.");
@@ -538,6 +604,89 @@ export default function codexImageGen(pi: ExtensionAPI) {
 					outputFormat,
 					saveMode: saveConfig.mode,
 					savedPath,
+					responseId: parsed.responseId,
+					imageGenerationId: parsed.image.id,
+					revisedPrompt: parsed.image.revisedPrompt,
+					usage: parsed.usage,
+				},
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "codex_edit_image",
+		label: "Codex Image Edit",
+		description:
+			"Edit an existing image with the OpenAI Codex ChatGPT backend image_generation tool (gpt-image-2) by sending source image(s) as Responses API input_image items. Uses existing openai-codex login; does not require OPENAI_API_KEY.",
+		promptSnippet: "Edit bitmap images via the OpenAI Codex ChatGPT backend gpt-image-2 image_generation tool using input images.",
+		promptGuidelines: [
+			"Use codex_edit_image when the user asks to transform, restyle, compose, or modify an existing raster image and wants to use Codex/OpenAI image editing without an API key.",
+			"Be explicit in the prompt about what should be preserved and what should change.",
+			"Do not use codex_edit_image without a clear image-editing request, because it consumes the user's Codex image quota.",
+		],
+		parameters: EDIT_TOOL_PARAMS,
+		executionMode: "parallel",
+		async execute(toolCallId, params: EditToolParams, signal, onUpdate, ctx) {
+			const outputFormat = params.outputFormat || "png";
+			const config = loadConfig(ctx.cwd);
+			const requestedModel = params.model || config.model || DEFAULT_MODEL;
+			const model = ctx.modelRegistry.find(PROVIDER, requestedModel)?.id || requestedModel;
+			const token = await ctx.modelRegistry.getApiKeyForProvider(PROVIDER);
+			if (!token) {
+				throw new Error(`Missing ${PROVIDER} credentials. Run /login and select ChatGPT Plus/Pro (Codex).`);
+			}
+			const accountId = extractChatGptAccountId(token);
+			const sessionId = ctx.sessionManager.getSessionId();
+			const imagePaths = Array.isArray(params.image) ? params.image : [params.image];
+
+			onUpdate?.({
+				content: [{ type: "text", text: `Requesting gpt-image-2 edit through ${PROVIDER}/${model} with ${imagePaths.length} input image(s)...` }],
+				details: { provider: PROVIDER, model, outputFormat, imagePaths },
+			});
+
+			const parsed = await requestImage(buildEditRequestBody(params, model, outputFormat, sessionId, ctx.cwd), token, accountId, signal);
+			if (!parsed.image) {
+				const text = parsed.text.join("").trim();
+				throw new Error(text ? `Codex did not return an edited image. Response text: ${text}` : "Codex did not return an edited image.");
+			}
+
+			const saveConfig = resolveSaveConfig(params, ctx.cwd, sessionId, config);
+			let savedPath: string | undefined;
+			if (saveConfig.mode !== "none" && saveConfig.outputDir) {
+				savedPath = await saveImage(parsed.image.result, outputFormat, saveConfig.outputDir, parsed.image.id || toolCallId);
+				onUpdate?.({
+					content: [{ type: "text", text: `Edited image saved to ${savedPath}.` }],
+					details: {
+						provider: PROVIDER,
+						model,
+						savedPath,
+						byteCount: Buffer.byteLength(parsed.image.result, "base64"),
+					},
+				});
+			}
+
+			const summary = [
+				`Edited image via ${PROVIDER}/${model} using backend gpt-image-2.`,
+				`Status: ${parsed.image.status}.`,
+				parsed.image.revisedPrompt ? `Revised prompt: ${parsed.image.revisedPrompt}` : undefined,
+				savedPath ? `Saved edited image to: ${savedPath}` : "Edited image was not saved to disk.",
+			]
+				.filter(Boolean)
+				.join(" ");
+
+			return {
+				content: [
+					{ type: "text", text: summary },
+					{ type: "image", data: parsed.image.result, mimeType: mimeForFormat(outputFormat) },
+				],
+				details: {
+					provider: PROVIDER,
+					model,
+					backendImageModel: "gpt-image-2",
+					outputFormat,
+					saveMode: saveConfig.mode,
+					savedPath,
+					inputImages: imagePaths,
 					responseId: parsed.responseId,
 					imageGenerationId: parsed.image.id,
 					revisedPrompt: parsed.image.revisedPrompt,
