@@ -1,3 +1,7 @@
+> [!IMPORTANT]
+> This repository has moved to [`jvm/pi-mono`](https://github.com/jvm/pi-mono/tree/main/packages/pi-codex-image-gen). It is archived and no longer maintained here.
+> Please file issues and pull requests in [`jvm/pi-mono`](https://github.com/jvm/pi-mono).
+
 # pi-codex-image-gen
 
 Image generation for [Pi](https://github.com/badlogic/pi-mono) using the ChatGPT Images 2.0 model via the OpenAI Codex Responses backend.
