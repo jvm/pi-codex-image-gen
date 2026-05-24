@@ -6,6 +6,11 @@ This project follows the spirit of [Keep a Changelog](https://keepachangelog.com
 
 ## [Unreleased]
 
+### Added
+
+- `codex_edit_image` Pi tool for editing existing local images through the Codex Responses backend with `input_image` content items and existing `openai-codex` auth.
+- Skill and README guidance for choosing `codex_edit_image` for existing-image edits while keeping the CLI fallback for explicit Image API controls such as masks.
+
 ## [0.1.8] - 2026-05-10
 
 ### Fixed
