@@ -28,6 +28,8 @@ In a Pi session:
 
 The agent will invoke `codex_generate_image` with your prompt, stream the response from the Codex backend, and save the resulting image to disk. The `model` parameter controls the Codex routing model; image generation is always performed by **gpt-image-2** on the backend.
 
+For image-to-image or reference-guided edits, pass a local image path with `image` or several paths with `images`. Relative paths resolve under the current workspace.
+
 ## Authentication
 
 Uses your existing **openai-codex** login — no `OPENAI_API_KEY` required. If you haven't logged in yet:
@@ -85,22 +87,26 @@ Project config overrides global config. Example:
 
 ## Tool parameters
 
-| Parameter      | Type   | Required | Description                                                        |
-| -------------- | ------ | -------- | ------------------------------------------------------------------ |
-| `prompt`       | string | ✅        | The image generation prompt.                                       |
-| `model`        | string | —        | Override the Codex model. Defaults to config or `gpt-5.5`.         |
-| `outputFormat` | string | —        | `png` (default), `jpeg`, or `webp`.                                |
-| `save`         | string | —        | Override save mode for this call.                                  |
-| `saveDir`      | string | —        | Directory when `save=custom`. Relative paths resolve under CWD.    |
+| Parameter      | Type     | Required | Description                                                        |
+| -------------- | -------- | -------- | ------------------------------------------------------------------ |
+| `prompt`       | string   | ✅        | The image generation/edit prompt.                                  |
+| `model`        | string   | —        | Override the Codex model. Defaults to config or `gpt-5.5`.         |
+| `outputFormat` | string   | —        | `png` (default), `jpeg`, or `webp`.                                |
+| `image`        | string   | —        | Single local reference image path. Relative paths resolve under CWD. |
+| `images`       | string[] | —        | Multiple local reference image paths. Relative paths resolve under CWD. |
+| `imageDetail`  | string   | —        | Reference image detail: `auto` (default), `low`, or `high`.        |
+| `save`         | string   | —        | Override save mode for this call.                                  |
+| `saveDir`      | string   | —        | Directory when `save=custom`. Relative paths resolve under CWD.    |
 
 ## How it works
 
 1. Resolves auth via Pi's `openai-codex` provider (ChatGPT session token).
 2. Sends a Codex Responses API request to the routing model (default `gpt-5.5`) with the `image_generation` tool enabled.
-3. The backend invokes **gpt-image-2** to generate the image.
-4. Parses the SSE stream for `response.output_item.done` events containing the base64 image.
-5. Saves the image to disk according to the active save mode.
-6. Returns the image data inline plus metadata (model, format, path, revised prompt, usage).
+3. If `image`/`images` were provided, reads the local PNG/JPEG/WebP files and sends them as `input_image` data URLs next to the text prompt.
+4. The backend invokes **gpt-image-2** to generate or edit the image.
+5. Parses the SSE stream for `response.output_item.done` events containing the base64 image.
+6. Saves the image to disk according to the active save mode.
+7. Returns the image data inline plus metadata (model, format, path, revised prompt, usage).
 
 ## Troubleshooting
 
@@ -110,6 +116,8 @@ Project config overrides global config. Example:
 | 401 / 403 response | Token expired | Re-run `/login` for openai-codex |
 | 429 response | Rate limited | Wait and retry; the extension retries automatically with backoff |
 | "Codex did not return an image" | Backend refused the prompt | Rephrase the prompt and try again |
+| "Could not read reference image" | Bad `image`/`images` path | Check the path; relative paths resolve under the workspace |
+| "Unsupported reference image type" | Reference is not PNG/JPEG/WebP | Convert the reference image to PNG, JPEG, or WebP |
 | "save=custom requires saveDir" | Missing config | Set `saveDir` in config or `PI_CODEX_IMAGE_SAVE_DIR` env var |
 
 ## License

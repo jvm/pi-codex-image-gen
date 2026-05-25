@@ -6,6 +6,11 @@ This project follows the spirit of [Keep a Changelog](https://keepachangelog.com
 
 ## [Unreleased]
 
+### Added
+
+- `codex_generate_image` now accepts local reference images via `image`/`images` for image-to-image and edit-style requests.
+- Added `imageDetail` control for reference images (`auto`, `low`, `high`).
+
 ## [0.1.8] - 2026-05-10
 
 ### Fixed
